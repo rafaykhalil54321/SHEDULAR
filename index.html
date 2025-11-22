@@ -468,29 +468,11 @@
     </div>
 
     <script>
-        const PRESET_CONFIG = [
-            // Day 1
-            [
-                { subject: 'IET Batch 5 (Network Adm.)', sections: 1, staffPerSection: 1, load: 1 }, // Morning (0)
-                { subject: 'CS Batch 1 (A/B)', sections: 2, staffPerSection: 2, load: 4 },          // Midday (1)
-                { subject: 'Civil Batch 1 (Engg Drawing)', sections: 1, staffPerSection: 1, load: 1 } // Evening (2)
-            ],
-            // Day 2
-            [
-                { subject: 'Electrical Batch 3 (Power Elec.)', sections: 1, staffPerSection: 1, load: 1 },
-                { subject: 'IET Batch 3 (Data Structures)', sections: 1, staffPerSection: 1, load: 1 },
-                { subject: 'CS Batch 3 (C/D)', sections: 2, staffPerSection: 2, load: 4 }
-            ],
-            // Day 3
-            [
-                { subject: 'IET Batch 1 (Applied Information)', sections: 1, staffPerSection: 1, load: 1 },
-                { subject: 'Electrical Batch 5 (Comm. Sys.)', sections: 1, staffPerSection: 1, load: 1 },
-                { subject: 'Civil Batch 3 & 5 (Fluid Mech.)', sections: 2, staffPerSection: 1, load: 2 }
-            ]
-        ];
+        // PRESET_CONFIG is now empty, so the app starts fresh.
+        const PRESET_CONFIG = []; 
 
         let staff = []; // { name: string, capacity: number, assigned: number, slotCounts: [m, mid, e] }
-        let examMatrix = JSON.parse(JSON.stringify(PRESET_CONFIG)); // Deep copy of preset data
+        let examMatrix = []; 
 
         const DOM = {
             staffName: document.getElementById('staffName'),
@@ -586,7 +568,7 @@
 
             // Update examMatrix size to match nDays
             while (examMatrix.length < nDays) {
-                // Add a new day with default 3 slots
+                // Add a new day with default 3 slots (empty)
                 examMatrix.push([
                     { subject: '', sections: 1, staffPerSection: 1, load: 1 },
                     { subject: '', sections: 1, staffPerSection: 1, load: 1 },
@@ -686,14 +668,16 @@
             examMatrix.forEach((daySlots, dayIndex) => {
                 daySlots.forEach((slotData, slotId) => {
                     // Create an individual duty object for each required 'load'
-                    for (let i = 0; i < slotData.load; i++) {
-                        allDuties.push({
-                            day: dayIndex + 1,
-                            slotId: slotId,
-                            slotName: SLOT_NAMES[slotId].name,
-                            subject: slotData.subject,
-                            assignedStaff: null // Will be filled by the algorithm
-                        });
+                    if (slotData.load > 0 && slotData.subject.trim() !== '') {
+                        for (let i = 0; i < slotData.load; i++) {
+                            allDuties.push({
+                                day: dayIndex + 1,
+                                slotId: slotId,
+                                slotName: SLOT_NAMES[slotId].name,
+                                subject: slotData.subject,
+                                assignedStaff: null // Will be filled by the algorithm
+                            });
+                        }
                     }
                 });
             });
@@ -702,7 +686,7 @@
             const totalCapacity = staff.reduce((sum, s) => sum + s.capacity, 0);
 
             if (totalDuties === 0) {
-                DOM.scheduleError.textContent = 'The Exam Matrix is empty. Please configure duties.';
+                DOM.scheduleError.textContent = 'The Exam Matrix is empty or subjects are missing. Please configure duties.';
                 DOM.scheduleError.classList.remove('hidden');
                 return;
             }
@@ -736,25 +720,19 @@
                 // Reset daily availability
                 staff.forEach(s => s.available = true);
 
-                // Sort duties within the day to prioritize high-load slots first, helping with assignment
-                dutiesByDay[day].sort((a, b) => {
-                    // Simple sort by slotId (Morning -> Midday -> Evening)
-                    return a.slotId - b.slotId;
-                });
+                // Sort duties within the day to prioritize Morning -> Midday -> Evening
+                dutiesByDay[day].sort((a, b) => a.slotId - b.slotId);
 
                 dutiesByDay[day].forEach(duty => {
                     // 1. Filter: Staff must be available (not assigned today) and under capacity
                     let eligibleStaff = staff.filter(s => s.available && s.assigned < s.capacity);
 
                     if (eligibleStaff.length === 0) {
-                        // This should ideally not happen if capacity is sufficient, but can occur
-                        // if all available staff for the day are busy.
                         console.error(`Day ${duty.day}, Slot ${duty.slotId}: No eligible staff remaining.`);
                         return; // Skip this duty
                     }
 
                     // 2. Fairness Constraint (Slot Balancing): Prioritize staff who have worked the LEAST in this slot type
-                    // The algorithm must prioritize teachers who have worked the least number of times in the current time slot (Morning, Midday, or Evening) across all previous days.
                     eligibleStaff.sort((a, b) => {
                         const slotCountA = a.slotCounts[duty.slotId];
                         const slotCountB = b.slotCounts[duty.slotId];
@@ -784,7 +762,7 @@
             }
 
             if (successfulAssignments < totalDuties) {
-                 DOM.scheduleError.textContent = `Only ${successfulAssignments} of ${totalDuties} duties were assigned. Check your capacity and matrix configuration.`;
+                 DOM.scheduleError.textContent = `Only ${successfulAssignments} of ${totalDuties} duties were assigned. Check capacity, matrix, and staffing rules.`;
                  DOM.scheduleError.classList.remove('hidden');
             } else {
                 DOM.scheduleError.classList.add('hidden');
@@ -856,32 +834,20 @@
                 return;
             }
 
-            // Get all duties assigned
-            const assignedDuties = staff.flatMap(s => {
-                // We need to re-scan the allDuties structure which is not globally stored after generate, 
-                // so we use the scheduleOutput's rendered data as the base.
-                // NOTE: A better approach would be to store the final `allDuties` array globally.
-                return Array.from(DOM.scheduleOutput.children).map(card => {
-                    const daySlotText = card.querySelector('.day-slot-info').textContent;
-                    const subject = card.querySelector('h4').textContent.replace(/[\u2600-\u26FF\u2700-\u27BF] /g, '').trim(); // Remove icons
-                    const assignedStaff = card.querySelector('.staff-assigned').textContent.replace(/[\u2600-\u26FF\u2700-\u27BF] /g, '').trim(); 
-                    
-                    if (assignedStaff === s.name) {
-                        const [dayPart, slotPart] = daySlotText.split(' - ');
-                        return {
-                            Day: dayPart.replace('Day ', ''),
-                            Slot: slotPart,
-                            Subject: subject,
-                            Staff: assignedStaff
-                        };
-                    }
-                    return null;
-                }).filter(Boolean);
-            }).filter((v, i, a) => 
-                // Deduplicate based on a unique combination of all fields (since the flatMap approach generates duplicates per staff member).
-                // A better approach would be to store the single final schedule array.
-                a.findIndex(t => t.Day === v.Day && t.Slot === v.Slot && t.Subject === v.Subject && t.Staff === v.Staff) === i
-            );
+            // Simple extraction of rendered data for CSV
+            const scheduleData = Array.from(DOM.scheduleOutput.children).map(card => {
+                const daySlotText = card.querySelector('.day-slot-info').textContent;
+                const subject = card.querySelector('h4').textContent.replace(/[\u2600-\u26FF\u2700-\u27BF] /g, '').trim(); 
+                const assignedStaff = card.querySelector('.staff-assigned').textContent.replace(/[\u2600-\u26FF\u2700-\u27BF] /g, '').trim(); 
+                
+                const [dayPart, slotPart] = daySlotText.split(' - ');
+                return {
+                    Day: dayPart.replace('Day ', ''),
+                    Slot: slotPart,
+                    Subject: subject,
+                    Staff: assignedStaff
+                };
+            });
             
             // Add staff workload data
             const workloadData = staff.map(s => ({
@@ -899,7 +865,7 @@
             csvContent += "--- SCHEDULE ---\r\n";
             csvContent += "Day,Slot,Subject,Assigned Staff\r\n";
             
-            assignedDuties.forEach(d => {
+            scheduleData.forEach(d => {
                 csvContent += `${d.Day},"${d.Slot}","${d.Subject}","${d.Staff}"\r\n`;
             });
             
@@ -915,7 +881,7 @@
             const link = document.createElement("a");
             link.setAttribute("href", encodedUri);
             link.setAttribute("download", "exam_schedule.csv");
-            document.body.appendChild(link); // Required for Firefox
+            document.body.appendChild(link);
             link.click();
             link.remove();
         }
@@ -926,18 +892,10 @@
 
         /* --- Initial Setup --- */
         function init() {
-            // Pre-load initial data
-            staff.push(
-                { name: 'Dr. Zulfiqar', capacity: 5, assigned: 0, slotCounts: [0, 0, 0] },
-                { name: 'Prof. Anjum', capacity: 5, assigned: 0, slotCounts: [0, 0, 0] },
-                { name: 'Ms. Amna', capacity: 5, assigned: 0, slotCounts: [0, 0, 0] },
-                { name: 'Mr. Bashir', capacity: 5, assigned: 0, slotCounts: [0, 0, 0] },
-                { name: 'Dr. Hina', capacity: 5, assigned: 0, slotCounts: [0, 0, 0] }
-            );
+            // Staff array is intentionally left empty.
             
-            updateStaffList();
-            DOM.nDays.value = 3; // Set default value
-            updateExamMatrixStructure(); // Render the matrix based on PRESET_CONFIG
+            DOM.nDays.value = 3; // Default to 3 days
+            updateExamMatrixStructure(); // Render the 3-day matrix with empty slots
         }
 
         window.onload = init;
